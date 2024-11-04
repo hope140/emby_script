@@ -1,0 +1,24 @@
+{
+    "folder_pairs": [
+        {
+            "src_folder": "X:\\Source\\电影",
+            "dst_folder": "Z:\\Destination\\媒体\\电影"
+        },
+        {
+            "src_folder": "X:\\Source\\动漫",
+            "dst_folder": "Z:\\Destination\\媒体\\动漫"
+        },
+        {
+            "src_folder": "X:\\Source\\电视剧",
+            "dst_folder": "Z:\\Destination\\媒体\\电视剧"
+        },
+        {
+            "src_folder": "X:\\Source\\剧场版",
+            "dst_folder": "Z:\\Destination\\媒体\\剧场版"
+        }
+    ],
+    "exclude_exts": [".avi", ".mkv"],
+    "max_size_mb": 100,
+    "on_duplicate": "overwrite",
+    "log_level": "INFO"
+}
