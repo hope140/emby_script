@@ -2,11 +2,34 @@ import os
 import shutil
 import logging
 import json
+import hashlib
 
 def set_log_level(config):
+    """
+    设置日志级别。
+
+    Args:
+        config (dict): 配置文件内容。
+    """
     log_level_config = config.get('log_level', 'INFO')
     log_level = getattr(logging, log_level_config.upper(), logging.INFO)
     logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s', encoding='utf-8')
+
+def compute_file_hash(file_path):
+    """
+    计算文件的哈希值。
+
+    Args:
+        file_path (str): 文件路径。
+
+    Returns:
+        str: 文件的 MD5 哈希值。
+    """
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.mp4', '.ts'), max_size_mb=100, on_duplicate='overwrite'):
     """
@@ -58,8 +81,14 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.mp4', '.ts'), max
             # 检查文件是否已存在
             if os.path.exists(dst_file_path):
                 if on_duplicate == 'skip':
-                    logging.info(f"Skipped existing file: {dst_file_path}")
-                    continue
+                    # 计算源文件和目标文件的哈希值
+                    src_hash = compute_file_hash(file_path)
+                    dst_hash = compute_file_hash(dst_file_path)
+                    if src_hash == dst_hash:
+                        logging.info(f"Skipped file as it already exists and is identical: {dst_file_path}")
+                        continue
+                    else:
+                        logging.info(f"Overwriting file as the existing file is different: {dst_file_path}")
                 elif on_duplicate == 'overwrite':
                     logging.info(f"Overwriting existing file: {dst_file_path}")
                     os.remove(dst_file_path)
