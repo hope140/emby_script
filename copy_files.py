@@ -31,14 +31,78 @@ def compute_file_hash(file_path):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
-def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.mp4', '.ts'), max_size_mb=100, on_duplicate='overwrite'):
+def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')):
+    """
+    根据源文件夹中的视频文件生成 .strm 文件。
+
+    Args:
+        src_folder (str): 源文件夹路径。
+        dst_folder (str): 目标文件夹路径。
+        webdav_base_url (str): 自定义的 WebDAV 地址头。
+        exclude_prefix (str): 要从目标路径中排除的前缀。
+        video_exts (tuple): 要处理的视频文件扩展名列表。
+    """
+    logging.info(f"开始生成 .strm 文件：从 {src_folder} 到 {dst_folder}")
+
+    # 确保目标文件夹存在
+    if not os.path.exists(dst_folder):
+        os.makedirs(dst_folder)
+        logging.info(f"目标文件夹已创建: {dst_folder}")
+    else:
+        logging.info(f"目标文件夹已存在: {dst_folder}")
+
+    # 初始化统计变量
+    total_files = 0
+    generated_strm_files = 0
+
+    # 递归遍历源文件夹中的所有文件和子文件夹
+    for root, dirs, files in os.walk(src_folder):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            logging.debug(f"处理文件: {file_path}")
+            relative_path = os.path.relpath(file_path, src_folder)
+            total_files += 1
+
+            # 检查文件扩展名
+            if any(filename.endswith(ext) for ext in video_exts):
+                # 计算目标路径
+                dst_path = os.path.join(dst_folder, os.path.dirname(relative_path))
+                dst_file_path = os.path.join(dst_path, os.path.splitext(filename)[0] + '.strm')
+
+                # 确保目标路径存在
+                os.makedirs(dst_path, exist_ok=True)
+
+                # 生成 .strm 文件内容
+                # 计算排除前缀后的路径
+                absolute_path = os.path.abspath(os.path.join(dst_folder, relative_path))
+                relative_webdav_path = os.path.relpath(absolute_path, exclude_prefix).replace(os.sep, '/')
+                webdav_url = f"{webdav_base_url}/{relative_webdav_path}"
+
+                # 检查 .strm 文件是否已存在且内容相同
+                if os.path.exists(dst_file_path):
+                    with open(dst_file_path, 'r', encoding='utf-8') as existing_strm_file:
+                        existing_content = existing_strm_file.read().strip()
+                    if existing_content == webdav_url:
+                        logging.info(f"跳过 .strm 文件，因为内容相同: {dst_file_path}")
+                        continue
+
+                with open(dst_file_path, 'w', encoding='utf-8') as strm_file:
+                    strm_file.write(webdav_url)
+
+                logging.info(f"生成 .strm 文件: {dst_file_path} 内容: {webdav_url}")
+                generated_strm_files += 1
+
+    # 返回总计统计信息
+    return total_files, generated_strm_files
+
+def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov'), max_size_mb=100, on_duplicate='overwrite'):
     """
     复制文件从 src_folder 到 dst_folder，并删除目标文件夹中不同于源文件夹的文件（.strm 文件除外）。
 
     Args:
         src_folder (str): 源文件夹路径。
         dst_folder (str): 目标文件夹路径。
-        exclude_exts (tuple): 要排除的文件扩展名列表，默认排除 ('.mkv', '.mp4')。
+        exclude_exts (tuple): 要排除的文件扩展名列表，默认排除 ('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')。
         max_size_mb (int): 文件的最大大小（以 MB 为单位），默认为 100。
         on_duplicate (str): 当目标文件夹中存在同名文件时的行为，可选值 'skip' 或 'overwrite'，默认为 'overwrite'。
     """
@@ -134,12 +198,8 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.mp4', '.ts'), max
                 logging.info(f"删除空目录: {dir_path}")
                 os.rmdir(dir_path)
 
-    # 输出总计统计信息
-    logging.info(f"总计处理的文件数: {total_files}")
-    logging.info(f"总计跳过的文件数: {skipped_files}")
-    logging.info(f"总计复制的文件数: {copied_files}")
-    logging.info(f"总计覆盖的文件数: {overwritten_files}")
-    logging.info(f"总计删除的文件数: {deleted_files}")
+    # 返回总计统计信息
+    return total_files, skipped_files, copied_files, overwritten_files, deleted_files
 
 if __name__ == "__main__":
     # 读取配置文件
@@ -153,12 +213,43 @@ if __name__ == "__main__":
     exclude_exts = tuple(config['exclude_exts'])
     max_size_mb = config['max_size_mb']
     on_duplicate = config['on_duplicate']
+    webdav_base_url = config['webdav_base_url']
+    exclude_prefix = config['exclude_prefix']
+    video_exts = tuple(config['video_exts'])
 
-    # 使用读取到的参数调用 copy_files 函数
+    # 初始化汇总统计变量
+    total_files_processed = 0
+    total_skipped_files = 0
+    total_copied_files = 0
+    total_overwritten_files = 0
+    total_deleted_files = 0
+    total_generated_strm_files = 0
+
+    # 使用读取到的参数调用 copy_files 和 create_strm_file 函数
     for pair in folder_pairs:
         src_folder = pair['src_folder']
         dst_folder = pair['dst_folder']
-        copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate)
 
-    logging.info("所有操作完成，按任意键关闭...")
+        # 复制文件
+        total_files, skipped_files, copied_files, overwritten_files, deleted_files = copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate)
+        total_files_processed += total_files
+        total_skipped_files += skipped_files
+        total_copied_files += copied_files
+        total_overwritten_files += overwritten_files
+        total_deleted_files += deleted_files
+
+        # 生成 .strm 文件
+        total_files, generated_strm_files = create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts)
+        total_files_processed += total_files
+        total_generated_strm_files += generated_strm_files
+
+    # 汇总输出统计信息
+    logging.info("所有操作完成，汇总统计信息如下：")
+    logging.info(f"总计处理的文件数: {total_files_processed}")
+    logging.info(f"总计跳过的文件数: {total_skipped_files}")
+    logging.info(f"总计复制的文件数: {total_copied_files}")
+    logging.info(f"总计覆盖的文件数: {total_overwritten_files}")
+    logging.info(f"总计删除的文件数: {total_deleted_files}")
+    logging.info(f"总计生成的 .strm 文件数: {total_generated_strm_files}")
+
     input("所有操作完成，按任意键关闭...")
