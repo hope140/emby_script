@@ -232,13 +232,28 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
                     timeout_files.append(file_path)
 
     # 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
+    video_files = set()
+    for root, dirs, files in os.walk(src_folder):
+        for filename in files:
+            if any(filename.endswith(ext) for ext in exclude_exts):
+                video_files.add(os.path.splitext(filename)[0])
+
     for root, dirs, files in os.walk(dst_folder, topdown=False):
         for filename in files:
-            if filename.endswith('.strm'):
-                continue
             file_path = os.path.join(root, filename)
             relative_path = os.path.relpath(file_path, dst_folder)
-            if relative_path not in src_files:
+            if not any(filename.endswith(ext) for ext in exclude_exts) and filename.endswith('.strm'):
+                # 检查 .strm 文件是否匹配视频文件
+                strm_name = os.path.splitext(filename)[0]
+                if strm_name not in video_files:
+                    logging.info(f"删除 .strm 文件，因为它没有匹配的视频文件: {file_path}")
+                    try:
+                        os.remove(file_path)
+                        deleted_files += 1
+                    except Exception as e:
+                        logging.error(f"删除 .strm 文件时出错: {file_path} - {e}")
+                    continue
+            elif relative_path not in src_files:
                 logging.info(f"删除文件: {file_path}")
                 try:
                     os.remove(file_path)
