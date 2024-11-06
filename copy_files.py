@@ -3,6 +3,8 @@ import shutil
 import logging
 import json
 import hashlib
+import time
+import threading
 
 def set_log_level(config):
     """
@@ -15,21 +17,36 @@ def set_log_level(config):
     log_level = getattr(logging, log_level_config.upper(), logging.INFO)
     logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s', encoding='utf-8')
 
-def compute_file_hash(file_path):
+def compute_file_hash(file_path, timeout=10):
     """
-    计算文件的哈希值。
+    计算文件的哈希值，并在超时后返回 None。
 
     Args:
         file_path (str): 文件路径。
+        timeout (int): 超时时间（以秒为单位）。
 
     Returns:
-        str: 文件的 MD5 哈希值。
+        str: 文件的 MD5 哈希值，如果超时则返回 None。
     """
-    hash_md5 = hashlib.md5()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+    def compute_hash():
+        hash_md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    hash_result = [None]
+    def worker():
+        hash_result[0] = compute_hash()
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        logging.warning(f"文件读取超时，跳过: {file_path}")
+        return None
+    return hash_result[0]
 
 def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')):
     """
@@ -80,14 +97,22 @@ def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, vi
 
                 # 检查 .strm 文件是否已存在且内容相同
                 if os.path.exists(dst_file_path):
-                    with open(dst_file_path, 'r', encoding='utf-8') as existing_strm_file:
-                        existing_content = existing_strm_file.read().strip()
+                    try:
+                        with open(dst_file_path, 'r', encoding='utf-8') as existing_strm_file:
+                            existing_content = existing_strm_file.read().strip()
+                    except Exception as e:
+                        logging.error(f"读取 .strm 文件时出错: {dst_file_path} - {e}")
+                        continue
                     if existing_content == webdav_url:
                         logging.info(f"跳过 .strm 文件，因为内容相同: {dst_file_path}")
                         continue
 
-                with open(dst_file_path, 'w', encoding='utf-8') as strm_file:
-                    strm_file.write(webdav_url)
+                try:
+                    with open(dst_file_path, 'w', encoding='utf-8') as strm_file:
+                        strm_file.write(webdav_url)
+                except Exception as e:
+                    logging.error(f"写入 .strm 文件时出错: {dst_file_path} - {e}")
+                    continue
 
                 logging.info(f"生成 .strm 文件: {dst_file_path} 内容: {webdav_url}")
                 generated_strm_files += 1
@@ -95,7 +120,7 @@ def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, vi
     # 返回总计统计信息
     return total_files, generated_strm_files
 
-def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov'), max_size_mb=100, on_duplicate='overwrite'):
+def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov'), max_size_mb=100, on_duplicate='overwrite', timeout=10):
     """
     复制文件从 src_folder 到 dst_folder，并删除目标文件夹中不同于源文件夹的文件（.strm 文件除外）。
 
@@ -105,6 +130,7 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
         exclude_exts (tuple): 要排除的文件扩展名列表，默认排除 ('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')。
         max_size_mb (int): 文件的最大大小（以 MB 为单位），默认为 100。
         on_duplicate (str): 当目标文件夹中存在同名文件时的行为，可选值 'skip' 或 'overwrite'，默认为 'overwrite'。
+        timeout (int): 文件处理的超时时间（以秒为单位），默认为 10 秒。
     """
     logging.info(f"开始操作：从 {src_folder} 复制文件到 {dst_folder}")
 
@@ -121,6 +147,7 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
     copied_files = 0
     overwritten_files = 0
     deleted_files = 0
+    timeout_files = []
 
     # 递归遍历源文件夹中的所有文件和子文件夹
     src_files = set()
@@ -158,26 +185,51 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
             if os.path.exists(dst_file_path):
                 if on_duplicate == 'skip':
                     # 计算源文件和目标文件的哈希值
-                    src_hash = compute_file_hash(file_path)
-                    dst_hash = compute_file_hash(dst_file_path)
+                    src_hash = compute_file_hash(file_path, timeout)
+                    dst_hash = compute_file_hash(dst_file_path, timeout)
+                    if src_hash is None or dst_hash is None:
+                        timeout_files.append(file_path)
+                        continue
                     if src_hash == dst_hash:
                         logging.info(f"跳过文件，因为文件已经存在且内容相同: {dst_file_path}")
                         skipped_files += 1
                         continue
                     else:
                         logging.info(f"覆盖文件，因为现有文件内容不同: {dst_file_path}")
+                        try:
+                            os.remove(dst_file_path)
+                        except Exception as e:
+                            logging.error(f"删除目标文件时出错: {dst_file_path} - {e}")
+                            continue
                         overwritten_files += 1
                 elif on_duplicate == 'overwrite':
                     logging.info(f"覆盖已存在的文件: {dst_file_path}")
-                    os.remove(dst_file_path)
+                    try:
+                        os.remove(dst_file_path)
+                    except Exception as e:
+                        logging.error(f"删除目标文件时出错: {dst_file_path} - {e}")
+                        continue
                     overwritten_files += 1
                 else:
                     raise ValueError("无效的 'on_duplicate' 值。请使用 'skip' 或 'overwrite'。")
 
             # 复制文件
-            shutil.copy2(file_path, dst_file_path)
-            logging.info(f"复制文件: {file_path} 到 {dst_file_path}")
-            copied_files += 1
+            start_time = time.time()
+            try:
+                shutil.copy2(file_path, dst_file_path)
+                logging.info(f"复制文件: {file_path} 到 {dst_file_path}")
+                copied_files += 1
+            except Exception as e:
+                logging.error(f"复制文件时出错: {file_path} - {e}")
+                timeout_files.append(file_path)
+            else:
+                if time.time() - start_time > timeout:
+                    logging.warning(f"文件处理超时，跳过: {file_path}")
+                    try:
+                        os.remove(dst_file_path)
+                    except Exception as e:
+                        logging.error(f"删除超时文件时出错: {dst_file_path} - {e}")
+                    timeout_files.append(file_path)
 
     # 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
     for root, dirs, files in os.walk(dst_folder, topdown=False):
@@ -188,18 +240,24 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
             relative_path = os.path.relpath(file_path, dst_folder)
             if relative_path not in src_files:
                 logging.info(f"删除文件: {file_path}")
-                os.remove(file_path)
-                deleted_files += 1
+                try:
+                    os.remove(file_path)
+                    deleted_files += 1
+                except Exception as e:
+                    logging.error(f"删除文件时出错: {file_path} - {e}")
 
         # 删除空目录
         for dir_name in dirs:
             dir_path = os.path.join(root, dir_name)
             if not os.listdir(dir_path):
                 logging.info(f"删除空目录: {dir_path}")
-                os.rmdir(dir_path)
+                try:
+                    os.rmdir(dir_path)
+                except Exception as e:
+                    logging.error(f"删除空目录时出错: {dir_path} - {e}")
 
     # 返回总计统计信息
-    return total_files, skipped_files, copied_files, overwritten_files, deleted_files
+    return total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files
 
 if __name__ == "__main__":
     # 读取配置文件
@@ -216,6 +274,7 @@ if __name__ == "__main__":
     webdav_base_url = config['webdav_base_url']
     exclude_prefix = config['exclude_prefix']
     video_exts = tuple(config['video_exts'])
+    timeout = config.get('timeout', 10)
 
     # 初始化汇总统计变量
     total_files_processed = 0
@@ -224,6 +283,7 @@ if __name__ == "__main__":
     total_overwritten_files = 0
     total_deleted_files = 0
     total_generated_strm_files = 0
+    all_timeout_files = []
 
     # 使用读取到的参数调用 copy_files 和 create_strm_file 函数
     for pair in folder_pairs:
@@ -231,12 +291,13 @@ if __name__ == "__main__":
         dst_folder = pair['dst_folder']
 
         # 复制文件
-        total_files, skipped_files, copied_files, overwritten_files, deleted_files = copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate)
+        total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files = copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate, timeout)
         total_files_processed += total_files
         total_skipped_files += skipped_files
         total_copied_files += copied_files
         total_overwritten_files += overwritten_files
         total_deleted_files += deleted_files
+        all_timeout_files.extend(timeout_files)
 
         # 生成 .strm 文件
         total_files, generated_strm_files = create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts)
@@ -251,5 +312,9 @@ if __name__ == "__main__":
     logging.info(f"总计覆盖的文件数: {total_overwritten_files}")
     logging.info(f"总计删除的文件数: {total_deleted_files}")
     logging.info(f"总计生成的 .strm 文件数: {total_generated_strm_files}")
+    if all_timeout_files:
+        logging.warning("以下文件处理超时，被跳过：")
+        for file_path in all_timeout_files:
+            logging.warning(file_path)
 
     input("所有操作完成，按任意键关闭...")
