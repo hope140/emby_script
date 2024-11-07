@@ -6,12 +6,12 @@ import hashlib
 import time
 import threading
 
+# 用于存储处理过的子文件夹记录的文件路径
+PROCESSED_SUBFOLDERS_FILE = 'processed_subfolders.json'
+
 def set_log_level(config):
     """
     设置日志级别。
-
-    Args:
-        config (dict): 配置文件内容。
     """
     log_level_config = config.get('log_level', 'INFO')
     log_level = getattr(logging, log_level_config.upper(), logging.INFO)
@@ -20,13 +20,6 @@ def set_log_level(config):
 def compute_file_hash(file_path, timeout=10):
     """
     计算文件的哈希值，并在超时后返回 None。
-
-    Args:
-        file_path (str): 文件路径。
-        timeout (int): 超时时间（以秒为单位）。
-
-    Returns:
-        str: 文件的 MD5 哈希值，如果超时则返回 None。
     """
     def compute_hash():
         hash_md5 = hashlib.md5()
@@ -48,16 +41,25 @@ def compute_file_hash(file_path, timeout=10):
         return None
     return hash_result[0]
 
-def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')):
+def load_processed_subfolders():
+    """
+    加载已处理过的子文件夹记录。
+    """
+    if os.path.exists(PROCESSED_SUBFOLDERS_FILE):
+        with open(PROCESSED_SUBFOLDERS_FILE, 'r', encoding='utf-8') as f:
+            return set(json.load(f))
+    return set()
+
+def save_processed_subfolders(processed_subfolders):
+    """
+    保存已处理过的子文件夹记录。
+    """
+    with open(PROCESSED_SUBFOLDERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(list(processed_subfolders), f)
+
+def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, config, video_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')):
     """
     根据源文件夹中的视频文件生成 .strm 文件。
-
-    Args:
-        src_folder (str): 源文件夹路径。
-        dst_folder (str): 目标文件夹路径。
-        webdav_base_url (str): 自定义的 WebDAV 地址头。
-        exclude_prefix (str): 要从目标路径中排除的前缀。
-        video_exts (tuple): 要处理的视频文件扩展名列表。
     """
     logging.info(f"开始生成 .strm 文件：从 {src_folder} 到 {dst_folder}")
 
@@ -72,8 +74,18 @@ def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, vi
     total_files = 0
     generated_strm_files = 0
 
+    # 加载已处理过的子文件夹记录
+    processed_subfolders = load_processed_subfolders()
+    force_process_subfolders = set(config.get('force_process_subfolders', []))
+
     # 递归遍历源文件夹中的所有文件和子文件夹
     for root, dirs, files in os.walk(src_folder):
+        # 检查当前子文件夹是否已经处理过
+        relative_subfolder = os.path.relpath(root, src_folder)
+        if relative_subfolder in processed_subfolders and not any(relative_subfolder.startswith(fp) for fp in force_process_subfolders):
+            logging.info(f"跳过已处理过的子文件夹: {relative_subfolder}")
+            continue
+
         for filename in files:
             file_path = os.path.join(root, filename)
             logging.debug(f"处理文件: {file_path}")
@@ -120,17 +132,9 @@ def create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, vi
     # 返回总计统计信息
     return total_files, generated_strm_files
 
-def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov'), max_size_mb=100, on_duplicate='overwrite', timeout=10):
+def copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate, timeout, config):
     """
     复制文件从 src_folder 到 dst_folder，并删除目标文件夹中不同于源文件夹的文件（.strm 文件除外）。
-
-    Args:
-        src_folder (str): 源文件夹路径。
-        dst_folder (str): 目标文件夹路径。
-        exclude_exts (tuple): 要排除的文件扩展名列表，默认排除 ('.mkv', '.iso', '.ts', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.mpg', '.flv', '.rm', '.mov')。
-        max_size_mb (int): 文件的最大大小（以 MB 为单位），默认为 100。
-        on_duplicate (str): 当目标文件夹中存在同名文件时的行为，可选值 'skip' 或 'overwrite'，默认为 'overwrite'。
-        timeout (int): 文件处理的超时时间（以秒为单位），默认为 10 秒。
     """
     logging.info(f"开始操作：从 {src_folder} 复制文件到 {dst_folder}")
 
@@ -149,9 +153,19 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
     deleted_files = 0
     timeout_files = []
 
+    # 加载已处理过的子文件夹记录
+    processed_subfolders = load_processed_subfolders()
+    force_process_subfolders = set(config.get('force_process_subfolders', []))
+
     # 递归遍历源文件夹中的所有文件和子文件夹
     src_files = set()
     for root, dirs, files in os.walk(src_folder):
+        # 检查当前子文件夹是否已经处理过
+        relative_subfolder = os.path.relpath(root, src_folder)
+        if relative_subfolder in processed_subfolders and not any(relative_subfolder.startswith(fp) for fp in force_process_subfolders):
+            logging.info(f"跳过已处理过的子文件夹: {relative_subfolder}")
+            continue
+
         for filename in files:
             file_path = os.path.join(root, filename)
             logging.debug(f"处理文件: {file_path}")
@@ -231,35 +245,10 @@ def copy_files(src_folder, dst_folder, exclude_exts=('.mkv', '.iso', '.ts', '.mp
                         logging.error(f"删除超时文件时出错: {dst_file_path} - {e}")
                     timeout_files.append(file_path)
 
-    # 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
-    for root, dirs, files in os.walk(dst_folder, topdown=False):
-        for filename in files:
-            if filename.endswith('.strm'):
-                continue
-            file_path = os.path.join(root, filename)
-            relative_path = os.path.relpath(file_path, dst_folder)
-            if relative_path not in src_files:
-                logging.info(f"删除文件: {file_path}")
-                try:
-                    os.remove(file_path)
-                    deleted_files += 1
-                except Exception as e:
-                    logging.error(f"删除文件时出错: {file_path} - {e}")
-
-        # 删除空目录
-        for dir_name in dirs:
-            dir_path = os.path.join(root, dir_name)
-            if not os.listdir(dir_path):
-                logging.info(f"删除空目录: {dir_path}")
-                try:
-                    os.rmdir(dir_path)
-                except Exception as e:
-                    logging.error(f"删除空目录时出错: {dir_path} - {e}")
-
     # 返回总计统计信息
-    return total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files
+    return total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files, src_files
 
-if __name__ == "__main__":
+def main():
     # 读取配置文件
     with open('config.json', 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
@@ -276,6 +265,10 @@ if __name__ == "__main__":
     video_exts = tuple(config['video_exts'])
     timeout = config.get('timeout', 10)
 
+    # 用于记录已处理的子文件夹
+    processed_subfolders = load_processed_subfolders()
+    force_process_subfolders = set(config.get('force_process_subfolders', []))
+
     # 初始化汇总统计变量
     total_files_processed = 0
     total_skipped_files = 0
@@ -287,11 +280,17 @@ if __name__ == "__main__":
 
     # 使用读取到的参数调用 copy_files 和 create_strm_file 函数
     for pair in folder_pairs:
-        src_folder = pair['src_folder']
-        dst_folder = pair['dst_folder']
+        src_folder = os.path.normpath(pair['src_folder'])
+        dst_folder = os.path.normpath(pair['dst_folder'])
+
+        # 将 force_process_subfolders 转换为绝对路径
+        force_process_subfolders_abs = {os.path.abspath(folder) for folder in force_process_subfolders}
+
+        # 将 force_process_subfolders 转换为相对路径
+        force_process_subfolders_relative = {os.path.relpath(folder, src_folder) for folder in force_process_subfolders_abs if os.path.commonprefix([folder, src_folder]) == src_folder}
 
         # 复制文件
-        total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files = copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate, timeout)
+        total_files, skipped_files, copied_files, overwritten_files, deleted_files, timeout_files, src_files = copy_files(src_folder, dst_folder, exclude_exts, max_size_mb, on_duplicate, timeout, config)
         total_files_processed += total_files
         total_skipped_files += skipped_files
         total_copied_files += copied_files
@@ -300,9 +299,47 @@ if __name__ == "__main__":
         all_timeout_files.extend(timeout_files)
 
         # 生成 .strm 文件
-        total_files, generated_strm_files = create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, video_exts)
+        total_files, generated_strm_files = create_strm_file(src_folder, dst_folder, webdav_base_url, exclude_prefix, config, video_exts)
         total_files_processed += total_files
         total_generated_strm_files += generated_strm_files
+
+        # 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
+        for root, dirs, files in os.walk(dst_folder, topdown=False):
+            # 检查当前子文件夹是否已经处理过
+            relative_subfolder = os.path.relpath(root, dst_folder)
+            if relative_subfolder in processed_subfolders and not any(relative_subfolder.startswith(fp) for fp in force_process_subfolders_relative):
+                logging.info(f"跳过已处理过的子文件夹: {relative_subfolder}")
+                continue
+
+            for filename in files:
+                if filename.endswith('.strm'):
+                    continue
+                file_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(file_path, dst_folder)
+                if relative_path not in src_files:
+                    logging.info(f"删除文件: {file_path}")
+                    try:
+                        os.remove(file_path)
+                        deleted_files += 1
+                    except Exception as e:
+                        logging.error(f"删除文件时出错: {file_path} - {e}")
+
+            # 删除空目录
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                if not os.listdir(dir_path):
+                    logging.info(f"删除空目录: {dir_path}")
+                    try:
+                        os.rmdir(dir_path)
+                    except Exception as e:
+                        logging.error(f"删除空目录时出错: {dir_path} - {e}")
+
+        # 记录已处理的子文件夹
+        for root, _, _ in os.walk(src_folder):
+            relative_subfolder = os.path.relpath(root, src_folder)
+            if not any(relative_subfolder.startswith(fp) for fp in force_process_subfolders_relative):
+                processed_subfolders.add(relative_subfolder)
+        save_processed_subfolders(processed_subfolders)
 
     # 汇总输出统计信息
     logging.info("所有操作完成，汇总统计信息如下：")
@@ -318,3 +355,6 @@ if __name__ == "__main__":
             logging.warning(file_path)
 
     input("所有操作完成，按任意键关闭...")
+
+if __name__ == "__main__":
+    main()

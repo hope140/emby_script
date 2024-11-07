@@ -2,20 +2,20 @@
 	"log_level": "INFO",
 	"folder_pairs": [
 		{
-			"src_folder": "X:\\Source\\电影",
-			"dst_folder": "Z:\\Destination\\媒体\\电影"
+			"src_folder": "X:/Source/电影",
+			"dst_folder": "Z:/Destination/媒体/电影"
 		},
 		{
-			"src_folder": "X:\\Source\\动漫",
-			"dst_folder": "Z:\\Destination\\媒体\\动漫"
+			"src_folder": "X:/Source/动漫",
+			"dst_folder": "Z:/Destination/媒体/动漫"
 		},
 		{
-			"src_folder": "X:\\Source\\电视剧",
-			"dst_folder": "Z:\\Destination\\媒体\\电视剧"
+			"src_folder": "X:/Source/电视剧",
+			"dst_folder": "Z:/Destination/媒体/电视剧"
 		},
 		{
-			"src_folder": "X:\\Source\\剧场版",
-			"dst_folder": "Z:\\Destination\\媒体\\剧场版"
+			"src_folder": "X:/Source/剧场版",
+			"dst_folder": "Z:/Destination/媒体/剧场版"
 		}
 	],
 	"exclude_exts": [
@@ -35,7 +35,7 @@
 	"max_size_mb": 100,
 	"on_duplicate": "skip",
 	"webdav_base_url": "https://alist.alist.alist/d",
-	"exclude_prefix": "Z:/auto_symlink/media",
+	"exclude_prefix": "Z:/Destination/媒体",
 	"video_exts": [
 		".mkv",
 		".iso",
@@ -49,5 +49,7 @@
 		".flv",
 		".rm",
 		".mov"
-	]
+	],
+	"timeout": 10,
+    "force_process_subfolders": ["X:/Source/动漫/xxx (2024)", "X:/Source/电视剧/yyy (2023)"]
 }
