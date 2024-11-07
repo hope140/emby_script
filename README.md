@@ -1,6 +1,3 @@
-### README 文件
-
-```markdown
 # Emby 视频处理脚本
 
 ## 概述
@@ -49,7 +46,14 @@
     "exclude_exts": [".avi", ".mkv"],
     "max_size_mb": 100,
     "on_duplicate": "overwrite",
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "timeout": 10,
+    "webdav_base_url": "http://your-webdav-server.com/",
+    "exclude_prefix": "Z:\\Destination",
+    "force_process_subfolders": [
+        "X:\\Source\\电影\\特殊文件夹",
+        "X:\\Source\\动漫\\特殊文件夹"
+    ]
 }
 ```
 
@@ -62,6 +66,10 @@
 - `max_size_mb`：文件的最大大小（以 MB 为单位）。
 - `on_duplicate`：当目标文件夹中存在同名文件时的行为，可选值为 `skip` 或 `overwrite`。
 - `log_level`：日志级别，可选值为 `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`。
+- `timeout`：计算文件哈希值时的超时时间（秒）。
+- `webdav_base_url`：WebDAV 服务器的基础 URL。
+- `exclude_prefix`：生成 `.strm` 文件时要排除的前缀路径。
+- `force_process_subfolders`：需要强制重新处理的子文件夹列表。
 
 #### 运行脚本
 
@@ -91,6 +99,10 @@ python C:\Path\To\Your\Script\copy_files.py
 ### 3. 日志输出不正确
 
 检查配置文件中的 `log_level` 设置是否正确。如果设置为 `DEBUG`，你会看到更多的调试信息。
+
+### 4. 强制刷新功能不工作
+
+确保在 `force_process_subfolders` 中指定的路径是正确的，并且这些路径相对于 `src_folder` 是有效的。例如，如果 `src_folder` 是 `X:\\Source\\电影`，那么 `force_process_subfolders` 中的路径应该是 `特殊文件夹`，而不是 `X:\\Source\\电影\\特殊文件夹`。
 
 ## 联系
 
