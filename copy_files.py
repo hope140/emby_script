@@ -303,36 +303,45 @@ def main():
         total_files_processed += total_files
         total_generated_strm_files += generated_strm_files
 
-        # 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
-        for root, dirs, files in os.walk(dst_folder, topdown=False):
-            # 检查当前子文件夹是否已经处理过
-            relative_subfolder = os.path.relpath(root, dst_folder)
-            if relative_subfolder in processed_subfolders and not any(relative_subfolder.startswith(fp) for fp in force_process_subfolders_relative):
-                logging.info(f"跳过已处理过的子文件夹: {relative_subfolder}")
-                continue
+	# 删除目标文件夹中异于源文件夹的文件（.strm 文件除外）
+    video_files = set()
+    for root, dirs, files in os.walk(src_folder):
+        for filename in files:
+            if any(filename.endswith(ext) for ext in exclude_exts):
+                video_files.add(os.path.splitext(filename)[0])
 
-            for filename in files:
-                if filename.endswith('.strm'):
-                    continue
-                file_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(file_path, dst_folder)
-                if relative_path not in src_files:
-                    logging.info(f"删除文件: {file_path}")
+    for root, dirs, files in os.walk(dst_folder, topdown=False):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            relative_path = os.path.relpath(file_path, dst_folder)
+            if not any(filename.endswith(ext) for ext in exclude_exts) and filename.endswith('.strm'):
+                # 检查 .strm 文件是否匹配视频文件
+                strm_name = os.path.splitext(filename)[0]
+                if strm_name not in video_files:
+                    logging.info(f"删除 .strm 文件，因为它没有匹配的视频文件: {file_path}")
                     try:
                         os.remove(file_path)
                         deleted_files += 1
                     except Exception as e:
-                        logging.error(f"删除文件时出错: {file_path} - {e}")
+                        logging.error(f"删除 .strm 文件时出错: {file_path} - {e}")
+                    continue
+            elif relative_path not in src_files:
+                logging.info(f"删除文件: {file_path}")
+                try:
+                    os.remove(file_path)
+                    deleted_files += 1
+                except Exception as e:
+                    logging.error(f"删除文件时出错: {file_path} - {e}")
 
-            # 删除空目录
-            for dir_name in dirs:
-                dir_path = os.path.join(root, dir_name)
-                if not os.listdir(dir_path):
-                    logging.info(f"删除空目录: {dir_path}")
-                    try:
-                        os.rmdir(dir_path)
-                    except Exception as e:
-                        logging.error(f"删除空目录时出错: {dir_path} - {e}")
+        # 删除空目录
+        for dir_name in dirs:
+            dir_path = os.path.join(root, dir_name)
+            if not os.listdir(dir_path):
+                logging.info(f"删除空目录: {dir_path}")
+                try:
+                    os.rmdir(dir_path)
+                except Exception as e:
+                    logging.error(f"删除空目录时出错: {dir_path} - {e}")
 
         # 记录已处理的子文件夹
         for root, _, _ in os.walk(src_folder):
